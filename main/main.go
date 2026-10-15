@@ -5,6 +5,7 @@ import (
 	"b0go/apps/panel"
 	_ "b0go/apps/pass"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -18,8 +19,22 @@ import (
 	"github.com/logrusorgru/aurora"
 )
 
+func chdirToExe() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return
+	}
+	_ = os.Chdir(filepath.Dir(exe))
+}
+
 func main() {
 	runtime.LockOSThread()
+	// Mac/Linux 从 Finder/访达打开时 cwd 常是 /，配置必须落在程序同目录
+	chdirToExe()
 
 	configFile := "config.ini"
 	defaultConfig := "[gateway]\nListenAddr = \":8000\"\nDomain=\"\"\nLive = false\n\n[pass]\nPath = \"files\"\nCodeReadOnly = \"\"\nCodeReadWrite = \"admin\"\nLive = false\n"
@@ -44,30 +59,41 @@ func main() {
 		for i := 0; i < 80 && !gateway.IsRunning(); i++ {
 			time.Sleep(100 * time.Millisecond)
 		}
+		port := gateway.PortOnly(gateway.CurrentAddr())
+		if port == "" {
+			port = "8000"
+		}
+		cwd, _ := os.Getwd()
 		engine.Print(aurora.Black("--------------------------------------------"))
 		engine.Print(aurora.BgGreen(aurora.Black("              NextPass 局域网作业助手              ")))
-		ip := nets.GetOutBoundIP()
-		serverUrl := ""
+		engine.Print(aurora.BrightBlue("程序目录：" + cwd))
+		engine.Print(aurora.BrightBlue("配置文件：" + filepath.Join(cwd, "config.ini")))
+		engine.Print(aurora.BrightBlue("端口：" + port))
+
 		if strings.TrimSpace(engine.Domain) != "" {
-			serverUrl = engine.Domain
+			engine.Print(aurora.BrightBlue("学生访问： http://" + engine.Domain + "/"))
+			engine.Print(aurora.BrightBlue("老师管理： http://" + engine.Domain + "/admin"))
 		} else {
-			addr := gateway.CurrentAddr()
-			ports := strings.Split(addr, ":")
-			if len(ports) == 2 {
-				if ports[0] != "" {
-					ip = ports[0]
+			ips := nets.ListLANIPs()
+			if len(ips) == 0 {
+				ips = []string{nets.GetOutBoundIP()}
+			}
+			for _, ip := range ips {
+				if ip == "" || ip == "127.0.0.1" {
+					continue
 				}
-				serverUrl = ip + ":" + ports[1]
-			} else {
-				serverUrl = ip + addr
+				engine.Print(aurora.BrightBlue("学生访问： http://" + ip + ":" + port + "/"))
+			}
+			engine.Print(aurora.BrightBlue("本机管理： http://127.0.0.1:" + port + "/admin"))
+			if len(ips) == 0 || (len(ips) == 1 && ips[0] == "127.0.0.1") {
+				engine.Print(aurora.Yellow("未识别到局域网 IP（若开了 VPN/Clash 请关闭或允许局域网）"))
 			}
 		}
-		engine.Print(aurora.BrightBlue("端口配置为：" + gateway.CurrentAddr()))
-		engine.Print(aurora.BrightBlue("学生访问： http://" + serverUrl + "/"))
-		engine.Print(aurora.BrightBlue("老师管理： http://" + serverUrl + "/admin"))
-		engine.Print(aurora.Green("需特别注意：本机【防火墙】设为：允许访问"))
+		engine.Print(aurora.Green("改端口/密码：编辑同目录 config.ini 后重启"))
+		engine.Print(aurora.Green("防火墙需允许本程序接受传入连接"))
 		engine.Print(aurora.Black("--------------------------------------------"))
-		_ = cmd.Open("http://" + serverUrl + "/admin")
+		// 本机用 127.0.0.1 打开，避免 VPN 假 IP 导致浏览器打不开
+		_ = cmd.Open("http://127.0.0.1:" + port + "/admin")
 	}()
 	time.Sleep(20 * time.Millisecond)
 	_ = engine.Run(configFile)
