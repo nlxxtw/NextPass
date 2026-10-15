@@ -22,8 +22,52 @@ import (
 
 var sessStore *session.Store
 
+// ensureWritableDataRoot 保证发文本等写入目录可写（Mac 在 Downloads/只读盘时「files」会 permission denied）
+func ensureWritableDataRoot(configured string) string {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		configured = "files"
+	}
+	try := func(dir string) string {
+		dir = filepath.Clean(dir)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return ""
+		}
+		test := filepath.Join(dir, ".np_write_test")
+		if err := os.WriteFile(test, []byte("ok"), 0644); err != nil {
+			return ""
+		}
+		_ = os.Remove(test)
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return dir
+		}
+		return abs
+	}
+	if abs := try(configured); abs != "" {
+		return abs
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		fallback := filepath.Join(home, "Documents", "NextPass", "files")
+		if abs := try(fallback); abs != "" {
+			return abs
+		}
+	}
+	// 最后再试一次配置路径（把原始错误留给后续 mkdir）
+	abs, _ := filepath.Abs(configured)
+	return abs
+}
+
 func initSessionStore() {
-	sessStore = session.NewStore(config.Path)
+	root := ensureWritableDataRoot(config.Path)
+	config.Path = root
+	_ = os.MkdirAll(filepath.Join(root, "_nextpass"), 0755)
+	sessStore = session.NewStore(root)
+}
+
+// ConfigDataPath 当前可写数据根目录（供启动日志打印）
+func ConfigDataPath() string {
+	return strings.TrimSpace(config.Path)
 }
 
 // Teacher: create session

@@ -3,7 +3,7 @@ package main
 import (
 	_ "b0go/apps/docs"
 	"b0go/apps/panel"
-	_ "b0go/apps/pass"
+	passapp "b0go/apps/pass"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -68,6 +68,9 @@ func main() {
 		engine.Print(aurora.BgGreen(aurora.Black("              NextPass 局域网作业助手              ")))
 		engine.Print(aurora.BrightBlue("程序目录：" + cwd))
 		engine.Print(aurora.BrightBlue("配置文件：" + filepath.Join(cwd, "config.ini")))
+		if p := strings.TrimSpace(passapp.ConfigDataPath()); p != "" {
+			engine.Print(aurora.BrightBlue("数据目录：" + p))
+		}
 		engine.Print(aurora.BrightBlue("端口：" + port))
 
 		if strings.TrimSpace(engine.Domain) != "" {

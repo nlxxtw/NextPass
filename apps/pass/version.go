@@ -1,7 +1,7 @@
 package app
 
 // AppVersion 当前程序版本（发布时由 CI -ldflags 注入，勿加 v 前缀）
-var AppVersion = "2.2.4"
+var AppVersion = "2.2.5"
 
 // GithubRepo Releases 仓库
 const GithubRepo = "nlxxtw/NextPass"

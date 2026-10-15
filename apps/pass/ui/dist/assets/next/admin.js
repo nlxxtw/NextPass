@@ -348,24 +348,48 @@
   function looksLikePath(s) {
     s = String(s || "").trim().replace(/^["']|["']$/g, "");
     if (!s) return false;
-    if (/^[a-zA-Z]:[\\/]/.test(s)) return true;
+    if (/^[a-zA-Z]:[\\/]/.test(s)) return true; // Windows
     if (/^\\\\[^\\]+\\/.test(s)) return true;
     if (/^file:/i.test(s)) return true;
+    // macOS / Linux 绝对路径
+    if (s.charAt(0) === "/" && s.length > 1 && s.indexOf("/") !== s.lastIndexOf("/")) {
+      return true;
+    }
+    if (s.indexOf("~/") === 0) return true;
     return false;
+  }
+
+  function fileURLToPath(u) {
+    u = String(u || "").trim();
+    if (!/^file:/i.test(u)) return "";
+    try {
+      var url = new URL(u);
+      var p = decodeURIComponent(url.pathname || "");
+      // Windows: /C:/Users/... → C:/Users/...
+      if (/^\/[a-zA-Z]:\//.test(p)) p = p.slice(1);
+      return p;
+    } catch (e) {
+      return "";
+    }
   }
 
   function pathFromDataTransfer(dt) {
     if (!dt) return "";
     var plain = (dt.getData("text/plain") || dt.getData("Text") || "").trim();
-    if (looksLikePath(plain)) {
-      return plain.split(/\r?\n/)[0].trim().replace(/^["']|["']$/g, "");
+    if (plain) {
+      var line = plain.split(/\r?\n/)[0].trim().replace(/^["']|["']$/g, "");
+      var fromFile = fileURLToPath(line);
+      if (fromFile) return fromFile;
+      if (looksLikePath(line)) return line;
     }
     var uri = (dt.getData("text/uri-list") || "").trim();
     if (uri) {
-      var line = uri.split(/\r?\n/).filter(function (l) {
+      var uline = uri.split(/\r?\n/).filter(function (l) {
         return l && l.charAt(0) !== "#";
       })[0];
-      if (line && /^file:/i.test(line)) return line.trim();
+      var up = fileURLToPath(uline);
+      if (up) return up;
+      if (uline && looksLikePath(uline)) return uline.trim();
     }
     if (dt.files && dt.files.length) {
       var f = dt.files[0];
@@ -425,10 +449,14 @@
         await applySharePath(p);
         return;
       }
+      // 浏览器不给网页绝对路径时：弹出系统选择框（Mac 用访达对话框）
+      NP.toast("正在打开系统选择框…");
       var data = await pickFolder(true, "file");
       if (data) {
         var dp = data.source || data.sharePath || data.abs || "";
         if (dp) $("sharePath").value = dp;
+      } else {
+        NP.toast("也可粘贴路径：访达选中文件，按住 Option → 拷贝路径");
       }
     });
     if (input) {
