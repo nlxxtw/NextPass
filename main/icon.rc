@@ -1,0 +1,2 @@
+// windres / rsrc: application icon
+IDI_ICON1 ICON "icon.ico"

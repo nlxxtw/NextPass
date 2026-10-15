@@ -1,0 +1,9 @@
+# local / build
+bin/
+*.exe
+*.syso
+main/*.syso
+.firecrawl/
+files/
+**/files/
+*.log

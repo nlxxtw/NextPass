@@ -1,0 +1,222 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (e.g. v2.1.0)"
+        required: true
+        default: "v2.2.1"
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            cgo: "1"
+            artifact: nextpass-win
+            binary: nextpass.exe
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cgo: "0"
+            artifact: nextpass-linux
+            binary: nextpass
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            cgo: "0"
+            artifact: nextpass-mac-arm64
+            binary: nextpass
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            cgo: "0"
+            artifact: nextpass-mac-intel
+            binary: nextpass
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - name: Install MinGW (Windows CGO)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+
+      - name: Hide Windows .syso on non-Windows
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
+          # 避免把 Windows 资源文件链进 mac/linux
+          find main -maxdepth 1 -name '*.syso' -exec mv {} {}.bak \; || true
+
+      - name: Resolve version for ldflags
+        id: buildver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME}"
+          fi
+          V="${V#v}"
+          echo "ver=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Embed Windows GUI manifest (teacher shell)
+        if: matrix.goos == 'windows'
+        working-directory: main
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 嵌入 GUI 清单 + 应用图标（explorer / 任务栏 / 面板窗口）
+          rm -f rsrc_windows_amd64.syso *.syso
+          test -f icon.ico
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico icon.ico -o rsrc_windows_amd64.syso
+          ls -lh rsrc_windows_amd64.syso
+
+      - name: Build
+        working-directory: main
+        shell: bash
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "../dist/${{ matrix.artifact }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            for d in \
+              "/c/ProgramData/mingw64/mingw64/bin" \
+              "/c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin" \
+              "/c/tools/mingw64/bin" \
+              "/c/mingw64/bin"
+            do
+              [ -d "$d" ] && export PATH="$d:$PATH"
+            done
+            gcc --version
+          fi
+          VER="${{ steps.buildver.outputs.ver }}"
+          LDFLAGS="-s -w -X b0go/apps/pass.AppVersion=${VER}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            # 无黑框控制台；双击出教师机面板
+            LDFLAGS="${LDFLAGS} -H windowsgui"
+          fi
+          go build -trimpath -ldflags="$LDFLAGS" -o "../dist/${{ matrix.artifact }}/${{ matrix.binary }}" .
+          ls -lh "../dist/${{ matrix.artifact }}/${{ matrix.binary }}"
+
+      - name: Stage package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG="dist/${{ matrix.artifact }}"
+          # 发布包只留可执行文件：
+          # config.ini 首次运行自动生成；GUI 清单已打进 exe（不写旁路 .manifest）
+          if [ "${{ matrix.goos }}" != "windows" ]; then
+            chmod +x "$PKG/${{ matrix.binary }}"
+          fi
+
+      - name: Zip artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            7z a -tzip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}"
+          else
+            zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME}"
+          fi
+          case "$V" in
+            v*) ;;
+            *) V="v$V" ;;
+          esac
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten assets
+        shell: bash
+        run: |
+          mkdir -p out
+          find release-assets -type f -name '*.zip' -exec cp {} out/ \;
+          ls -lah out
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: NextPass ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            NextPass 局域网作业助手（基于 b0pass 改造）
+
+            ## 下载
+            - **Windows（教师机面板）**: `nextpass-win.zip` — 解压后基本只需 `nextpass.exe`
+            - **Linux**: `nextpass-linux.zip`
+            - **macOS Apple Silicon (M1/M2/M3)**: `nextpass-mac-arm64.zip`
+            - **macOS Intel**: `nextpass-mac-intel.zip`
+
+            ## Windows 使用
+            1. 解压后双击 `nextpass.exe` → **教师机面板**（配置/启停/日志/更新）
+            2. 关闭面板 = 停止服务
+            3. **学生**浏览器：`http://老师IP:8000/`
+            4. **管理端**：面板内打开，或浏览器 `http://老师IP:8000/admin`（默认口令 `admin`）
+
+            ## 其它平台
+            1. 运行 `./nextpass`（Mac 若无法打开：`chmod +x nextpass && ./nextpass`）
+            2. 浏览器访问学生端 / 管理端同上
+
+            > Apple Silicon 请用 `nextpass-mac-arm64`；误用 Intel 包会报 `bad CPU type in executable`。
+          files: |
+            out/*.zip
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
