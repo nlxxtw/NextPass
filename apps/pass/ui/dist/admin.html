@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>NextPass-超大文件传输共享神器</title>
-  <link rel="icon" type="image/png" href="/assets/next/favicon.png?v=61">
-  <link rel="apple-touch-icon" href="/assets/next/logo-mark.png?v=61">
-  <link rel="stylesheet" href="/assets/next/app.css?v=61">
+  <link rel="icon" type="image/png" href="/assets/next/favicon.png?v=62">
+  <link rel="apple-touch-icon" href="/assets/next/logo-mark.png?v=62">
+  <link rel="stylesheet" href="/assets/next/app.css?v=62">
 </head>
 <body>
   <div id="loginGate" class="login-gate">
     <div class="card login-card">
       <div class="brand login-brand">
         <div class="brand-row">
-          <img class="brand-mark brand-mark-lg" src="/assets/next/logo-mark.png?v=61" width="56" height="56" alt="">
+          <img class="brand-mark brand-mark-lg" src="/assets/next/logo-mark.png?v=62" width="56" height="56" alt="">
           <h1 class="logo">Next<em>Pass</em></h1>
         </div>
         <p class="tagline">教室局域网 · 交作业 · 发资料</p>
@@ -34,14 +34,14 @@
     <header class="top sticky">
       <div class="brand">
         <div class="brand-row">
-          <img class="brand-mark" src="/assets/next/logo-mark.png?v=61" width="36" height="36" alt="">
+          <img class="brand-mark" src="/assets/next/logo-mark.png?v=62" width="36" height="36" alt="">
           <h1 class="logo">Next<em>Pass</em></h1>
         </div>
         <p class="tagline">高性能手机电脑局域网超大文件传输共享神器</p>
       </div>
       <div class="top-actions">
         <button class="btn ghost" id="globalRefresh" type="button">刷新</button>
-        <button class="btn collect" id="openStudent" type="button">学生页</button>
+        <button class="btn" id="openStudent" type="button">学生页</button>
         <button class="btn danger solid" id="logoutBtn" type="button">退出</button>
       </div>
     </header>
@@ -95,7 +95,7 @@
           <label class="check"><input type="checkbox" id="canSeeOthers"> 可见他人作业</label>
           <label class="check"><input type="checkbox" id="canDownloadOthers" disabled> 可下载他人作业</label>
         </div>
-        <button class="btn block collect" id="createBtn" type="button">创建收作业</button>
+        <button class="btn block" id="createBtn" type="button">创建收作业</button>
       </section>
     </div>
 
@@ -137,24 +137,9 @@
     </section>
   </div>
 
-  <div id="dlDetail" class="dl-sheet" hidden>
-    <div class="dl-sheet-backdrop" data-dl-close></div>
-    <div class="dl-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="dlDetailTitle">
-      <header class="dl-sheet-head">
-        <div class="dl-sheet-brand">
-          <span class="dl-sheet-kicker">下载明细</span>
-          <h3 id="dlDetailTitle">—</h3>
-          <p class="dl-sheet-sub" id="dlDetailSub"></p>
-        </div>
-        <button type="button" class="btn ghost dl-sheet-x" data-dl-close aria-label="关闭">关闭</button>
-      </header>
-      <div class="dl-sheet-body" id="dlDetailBody"></div>
-    </div>
-  </div>
-
   <div id="toast" class="toast"></div>
   <script src="/assets/lib/qrcode.min.js"></script>
-  <script src="/assets/next/common.js?v=61"></script>
-  <script src="/assets/next/admin.js?v=61"></script>
+  <script src="/assets/next/common.js?v=62"></script>
+  <script src="/assets/next/admin.js?v=62"></script>
 </body>
 </html>

@@ -89,7 +89,8 @@
         : "如：第3章实验";
     }
     var createBtn = $("createBtn");
-    createBtn.className = "btn block " + NP.modeClass(mode);
+    // 主按钮统一主题蓝，不用青绿「AI色」
+    createBtn.className = "btn block";
     createBtn.textContent =
       collect ? "创建收作业" : distribute ? "创建发资料" : "创建发文本";
     $("listTitle").textContent =
@@ -150,56 +151,80 @@
     return escapeHtml(s).replace(/'/g, "&#39;");
   }
 
-  function closeDownloadDetail() {
-    var el = $("dlDetail");
-    if (el) el.hidden = true;
+  function downloadHitsHtml(item) {
+    var hits = (item && item.downloadHits) || [];
+    if (!hits.length) {
+      return '<p class="meta dl-expand-empty">暂无明细（同 IP 只计 1 次）</p>';
+    }
+    return (
+      '<ul class="dl-hit-list">' +
+      hits
+        .map(function (h) {
+          var ip = escapeHtml(h.ip || "—");
+          var at = escapeHtml(h.at || "时间未记录");
+          return (
+            '<li class="dl-hit">' +
+            '<span class="dl-hit-ip">' +
+            ip +
+            "</span>" +
+            '<span class="dl-hit-at">' +
+            at +
+            "</span>" +
+            "</li>"
+          );
+        })
+        .join("") +
+      "</ul>"
+    );
   }
 
-  function openDownloadDetail(item) {
-    var sheet = $("dlDetail");
-    if (!sheet || !item) return;
-    var hits = item.downloadHits || [];
-    $("dlDetailTitle").textContent = item.name || "文件";
-    $("dlDetailSub").textContent =
-      (item.downloadCount || hits.length || 0) +
-      " 名学生已下载 · 同 IP 只计 1 次";
-    var body = $("dlDetailBody");
-    if (!hits.length) {
-      body.innerHTML =
-        '<div class="dl-empty">' +
-        "<p>暂无下载记录</p>" +
-        "<span>学生下载后，这里会显示 IP 与首次下载时间</span>" +
-        "</div>";
-    } else {
-      body.innerHTML =
-        '<ol class="dl-hit-list">' +
-        hits
-          .map(function (h, i) {
-            var ip = escapeHtml(h.ip || "—");
-            var at = escapeHtml(h.at || "时间未记录");
-            var noTime = !h.at;
-            return (
-              '<li class="dl-hit">' +
-              '<span class="dl-hit-idx">' +
-              String(i + 1).padStart(2, "0") +
-              "</span>" +
-              '<div class="dl-hit-main">' +
-              '<span class="dl-hit-ip">' +
-              ip +
-              "</span>" +
-              '<span class="dl-hit-at' +
-              (noTime ? " mute" : "") +
-              '">' +
-              at +
-              "</span>" +
-              "</div>" +
-              "</li>"
-            );
-          })
-          .join("") +
-        "</ol>";
+  function toggleDownloadDetail(btn, item) {
+    var row = btn.closest("tr");
+    if (!row) return;
+    var next = row.nextElementSibling;
+    if (next && next.classList.contains("dl-expand-row")) {
+      next.remove();
+      btn.textContent = "查看";
+      btn.setAttribute("aria-expanded", "false");
+      return;
     }
-    sheet.hidden = false;
+    // 先收起其它展开行
+    var table = row.closest("table");
+    if (table) {
+      table.querySelectorAll(".dl-expand-row").forEach(function (r) {
+        var prev = r.previousElementSibling;
+        if (prev) {
+          var link = prev.querySelector(".dl-view-link");
+          if (link) {
+            link.textContent = "查看";
+            link.setAttribute("aria-expanded", "false");
+          }
+        }
+        r.remove();
+      });
+    }
+    var expand = document.createElement("tr");
+    expand.className = "dl-expand-row";
+    expand.innerHTML =
+      '<td colspan="3">' +
+      '<div class="dl-expand">' +
+      '<div class="dl-expand-bar">' +
+      "<span>下载明细 · " +
+      escapeHtml(item.name || "") +
+      "</span>" +
+      '<button type="button" class="dl-expand-close">收起</button>' +
+      "</div>" +
+      downloadHitsHtml(item) +
+      "</div>" +
+      "</td>";
+    row.after(expand);
+    btn.textContent = "收起";
+    btn.setAttribute("aria-expanded", "true");
+    expand.querySelector(".dl-expand-close").onclick = function () {
+      expand.remove();
+      btn.textContent = "查看";
+      btn.setAttribute("aria-expanded", "false");
+    };
   }
 
   function shortPath(p) {
@@ -506,33 +531,31 @@
           ? mats
               .map(function (it, idx) {
                 var n = it.downloadCount || 0;
-                var btn =
+                var cell =
                   n > 0
-                    ? '<button type="button" class="dl-count-btn" data-dl-idx="' +
-                      idx +
-                      '" title="查看下载 IP 与时间">' +
-                      '<span class="dl-count-num">' +
+                    ? '<span class="dl-num">' +
                       n +
-                      "</span>" +
-                      '<span class="dl-count-label">查看</span></button>'
-                    : '<span class="dl-count-zero">0</span>';
+                      '</span> <button type="button" class="dl-view-link" data-dl-idx="' +
+                      idx +
+                      '" aria-expanded="false">查看</button>'
+                    : '<span class="dl-num mute">0</span>';
                 return (
                   "<tr><td>" +
                   escapeHtml(it.name) +
                   "</td><td>" +
                   escapeHtml(it.sizeText) +
-                  "</td><td class=\"dl-count-cell\">" +
-                  btn +
+                  '</td><td class="dl-count-cell">' +
+                  cell +
                   "</td></tr>"
                 );
               })
               .join("")
           : '<tr><td colspan="3" class="meta">该文件夹里还没有文件</td></tr>';
-        card.querySelectorAll(".dl-count-btn").forEach(function (btn) {
+        card.querySelectorAll(".dl-view-link").forEach(function (btn) {
           btn.onclick = function () {
             var i = parseInt(btn.getAttribute("data-dl-idx"), 10);
             var item = mats[i];
-            if (item) openDownloadDetail(item);
+            if (item) toggleDownloadDetail(btn, item);
           };
         });
       }
@@ -664,12 +687,6 @@
   }
 
   function wire() {
-    document.querySelectorAll("[data-dl-close]").forEach(function (el) {
-      el.onclick = closeDownloadDetail;
-    });
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") closeDownloadDetail();
-    });
     document.querySelectorAll("#modeSeg button").forEach(function (btn) {
       btn.onclick = function () {
         document.querySelectorAll("#modeSeg button").forEach(function (b) {
