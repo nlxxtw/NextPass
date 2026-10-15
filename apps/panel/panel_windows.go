@@ -217,7 +217,7 @@ func RunDesktop() bool {
 						Title:  "运行日志",
 						Layout: VBox{},
 						Children: []Widget{
-							Label{Text: "文件位置: " + resolveLogPath() + "（自动刷新）"},
+							Label{Text: "文件位置: " + resolveLogPath() + "（点「刷新」查看）"},
 							Composite{
 								Layout: HBox{},
 								Children: []Widget{
@@ -275,23 +275,6 @@ func RunDesktop() bool {
 		blocked := runForceUpdateCheck(mw, tipLB, btnStart, btnStop, btnAdmin, btnStudent, false)
 		if blocked {
 			syncApply(buildState("发现新版本，请先完成更新"))
-		}
-	}()
-
-	// 运行日志每 2 秒自动刷新
-	go func() {
-		t := time.NewTicker(2 * time.Second)
-		defer t.Stop()
-		for range t.C {
-			if mw == nil {
-				return
-			}
-			txt := applog.Tail(120 << 10)
-			mw.Synchronize(func() {
-				if logEdit != nil {
-					_ = logEdit.SetText(txt)
-				}
-			})
 		}
 	}()
 

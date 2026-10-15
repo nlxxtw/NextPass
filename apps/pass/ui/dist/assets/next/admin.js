@@ -4,6 +4,7 @@
     stats: null,
     statsId: "",
     textChat: null,
+    dlExpandName: "", // 下载明细展开中的文件名；轮询刷新后保持展开，仅点「收起」才关
     _wired: false,
     _poll: null,
   };
@@ -178,17 +179,19 @@
     );
   }
 
-  function toggleDownloadDetail(btn, item) {
-    var row = btn.closest("tr");
-    if (!row) return;
-    var next = row.nextElementSibling;
-    if (next && next.classList.contains("dl-expand-row")) {
-      next.remove();
+  function collapseDownloadDetail(btn, expandRow) {
+    state.dlExpandName = "";
+    if (expandRow) expandRow.remove();
+    if (btn) {
       btn.textContent = "查看";
       btn.setAttribute("aria-expanded", "false");
-      return;
     }
-    // 先收起其它展开行
+  }
+
+  function openDownloadDetailRow(btn, item) {
+    if (!btn || !item) return;
+    var row = btn.closest("tr");
+    if (!row) return;
     var table = row.closest("table");
     if (table) {
       table.querySelectorAll(".dl-expand-row").forEach(function (r) {
@@ -205,6 +208,7 @@
     }
     var expand = document.createElement("tr");
     expand.className = "dl-expand-row";
+    expand.dataset.file = item.name || "";
     expand.innerHTML =
       '<td colspan="3">' +
       '<div class="dl-expand">' +
@@ -218,13 +222,23 @@
       "</div>" +
       "</td>";
     row.after(expand);
+    state.dlExpandName = item.name || "";
     btn.textContent = "收起";
     btn.setAttribute("aria-expanded", "true");
     expand.querySelector(".dl-expand-close").onclick = function () {
-      expand.remove();
-      btn.textContent = "查看";
-      btn.setAttribute("aria-expanded", "false");
+      collapseDownloadDetail(btn, expand);
     };
+  }
+
+  function toggleDownloadDetail(btn, item) {
+    var row = btn.closest("tr");
+    if (!row) return;
+    var next = row.nextElementSibling;
+    if (next && next.classList.contains("dl-expand-row")) {
+      collapseDownloadDetail(btn, next);
+      return;
+    }
+    openDownloadDetailRow(btn, item);
   }
 
   function shortPath(p) {
@@ -570,13 +584,18 @@
           ? mats
               .map(function (it, idx) {
                 var n = it.downloadCount || 0;
+                var open = state.dlExpandName && state.dlExpandName === it.name;
                 var cell =
                   n > 0
                     ? '<span class="dl-num">' +
                       n +
                       '</span> <button type="button" class="dl-view-link" data-dl-idx="' +
                       idx +
-                      '" aria-expanded="false">查看</button>'
+                      '" aria-expanded="' +
+                      (open ? "true" : "false") +
+                      '">' +
+                      (open ? "收起" : "查看") +
+                      "</button>"
                     : '<span class="dl-num mute">0</span>';
                 return (
                   "<tr><td>" +
@@ -597,6 +616,24 @@
             if (item) toggleDownloadDetail(btn, item);
           };
         });
+        // 轮询刷新后恢复展开（只点「收起」才会关掉）
+        if (state.dlExpandName) {
+          var keep = null;
+          var keepBtn = null;
+          mats.forEach(function (it, idx) {
+            if (it.name === state.dlExpandName) {
+              keep = it;
+              keepBtn = card.querySelector(
+                '.dl-view-link[data-dl-idx="' + idx + '"]'
+              );
+            }
+          });
+          if (keep && keepBtn) {
+            openDownloadDetailRow(keepBtn, keep);
+          } else {
+            state.dlExpandName = "";
+          }
+        }
       }
       card.querySelectorAll(".del-sub").forEach(function (btn) {
         btn.onclick = async function () {
