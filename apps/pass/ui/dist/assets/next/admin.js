@@ -351,11 +351,9 @@
     if (/^[a-zA-Z]:[\\/]/.test(s)) return true; // Windows
     if (/^\\\\[^\\]+\\/.test(s)) return true;
     if (/^file:/i.test(s)) return true;
-    // macOS / Linux 绝对路径
-    if (s.charAt(0) === "/" && s.length > 1 && s.indexOf("/") !== s.lastIndexOf("/")) {
-      return true;
-    }
-    if (s.indexOf("~/") === 0) return true;
+    // macOS / Linux 绝对路径（/Users/... 或 /tmp/...）
+    if (s.charAt(0) === "/" && s.length > 1) return true;
+    if (s.indexOf("~/") === 0 || s === "~") return true;
     return false;
   }
 
@@ -449,14 +447,27 @@
         await applySharePath(p);
         return;
       }
-      // 浏览器不给网页绝对路径时：弹出系统选择框（Mac 用访达对话框）
+      // Chrome/Safari 不给网页绝对路径：先读访达当前选中（刚拖的文件通常仍选中）
+      try {
+        NP.toast("正在识别拖放路径…");
+        var sel = await NP.api("/pass/session/finder-selection", {
+          method: "POST",
+          json: {},
+        });
+        var sp = (sel && (sel.sharePath || sel.abs || sel.source)) || "";
+        if (sp) {
+          $("sharePath").value = sp;
+          NP.toast("已识别路径");
+          return;
+        }
+      } catch (ignore) {}
       NP.toast("正在打开系统选择框…");
       var data = await pickFolder(true, "file");
       if (data) {
         var dp = data.source || data.sharePath || data.abs || "";
         if (dp) $("sharePath").value = dp;
       } else {
-        NP.toast("也可粘贴路径：访达选中文件，按住 Option → 拷贝路径");
+        NP.toast("也可粘贴路径：访达选中 → Option+Command+C 拷贝路径");
       }
     });
     if (input) {

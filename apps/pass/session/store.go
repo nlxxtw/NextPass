@@ -235,9 +235,11 @@ func (s *Store) Create(name, folder, sharePath, mode string, requireIdentity, ca
 		sess.AccessPassword = ""
 		sess.Deadline = ""
 		if err := os.MkdirAll(s.textDir(), 0755); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("无法创建发文本目录（请检查磁盘权限）: %v", err)
 		}
-		_ = s.saveTextMessages(id, []TextMessage{})
+		if err := s.saveTextMessages(id, []TextMessage{}); err != nil {
+			return nil, fmt.Errorf("无法写入发文本数据: %v", err)
+		}
 	} else {
 		sharePath = filepath.Clean(strings.TrimSpace(sharePath))
 		folderRaw := strings.TrimSpace(folder)

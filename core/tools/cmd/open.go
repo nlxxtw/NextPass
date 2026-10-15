@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -29,7 +30,17 @@ func Reveal(uri string) error {
 		return nil
 	}
 	uri = strings.ReplaceAll(uri, "\\", "/")
-	cmd := exec.Command(run, uri)
-	log.Println("[CommandAs]", run, uri)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		// 文件：在访达中显示并选中；文件夹：直接打开
+		if st, err := os.Stat(uri); err == nil && !st.IsDir() {
+			cmd = exec.Command(run, "-R", uri)
+		} else {
+			cmd = exec.Command(run, uri)
+		}
+	} else {
+		cmd = exec.Command(run, uri)
+	}
+	log.Println("[CommandAs]", cmd.Args)
 	return cmd.Start()
 }

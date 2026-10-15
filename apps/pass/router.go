@@ -101,6 +101,7 @@ func routeApi() {
 	POSTX("/session/material-upload", "{id}", "上传资料(rw)", SessionMaterialUpload)
 	POSTX("/session/pick-folder", "{}", "本机选目录(rw)", SessionPickFolder)
 	POSTX("/session/capture-drop", "{}", "本机拖放识别路径(rw)", SessionCaptureDrop)
+	POSTX("/session/finder-selection", "{}", "读取访达选中项(rw)", SessionFinderSelection)
 	POSTX("/session/resolve-path", "{path}", "校验本机路径(rw)", SessionResolvePath)
 	POSTX("/session/set-folder", "{id,folder}", "修改活动目录(rw)", SessionSetFolder)
 	POSTX("/session/reveal", "{id}", "本机打开文件夹(rw)", SessionReveal)

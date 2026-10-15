@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -21,6 +22,13 @@ import (
 )
 
 var sessStore *session.Store
+
+func macBadDataRoot(abs string) bool {
+	low := strings.ToLower(filepath.ToSlash(abs))
+	return strings.Contains(low, "/downloads/") ||
+		strings.Contains(low, "apptranslocation") ||
+		strings.Contains(low, "/.trash/")
+}
 
 // ensureWritableDataRoot 保证发文本等写入目录可写（Mac 在 Downloads/只读盘时「files」会 permission denied）
 func ensureWritableDataRoot(configured string) string {
@@ -44,16 +52,28 @@ func ensureWritableDataRoot(configured string) string {
 		}
 		return abs
 	}
+	homeDocs := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		homeDocs = filepath.Join(home, "Documents", "NextPass", "files")
+	}
+	// macOS：程序常放在下载文件夹 / App Translocation，发文本写入易失败 → 优先「文稿/NextPass」
+	if runtime.GOOS == "darwin" && homeDocs != "" {
+		cfgAbs, _ := filepath.Abs(configured)
+		if configured == "files" || macBadDataRoot(cfgAbs) {
+			if abs := try(homeDocs); abs != "" {
+				log.Println("数据目录改用:", abs)
+				return abs
+			}
+		}
+	}
 	if abs := try(configured); abs != "" {
 		return abs
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		fallback := filepath.Join(home, "Documents", "NextPass", "files")
-		if abs := try(fallback); abs != "" {
+	if homeDocs != "" {
+		if abs := try(homeDocs); abs != "" {
 			return abs
 		}
 	}
-	// 最后再试一次配置路径（把原始错误留给后续 mkdir）
 	abs, _ := filepath.Abs(configured)
 	return abs
 }
@@ -365,6 +385,22 @@ func SessionResolvePath(c *gin.Context) {
 	}, c)
 }
 
+func expandUserPath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	if raw == "~" || strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if raw == "~" {
+				return home
+			}
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(raw[1:], `/`), `\`))
+		}
+	}
+	return raw
+}
+
 func normalizeLocalSharePath(raw string) (share string, wasFile bool, err error) {
 	raw = strings.TrimSpace(raw)
 	raw = strings.Trim(raw, `"'`)
@@ -372,27 +408,27 @@ func normalizeLocalSharePath(raw string) (share string, wasFile bool, err error)
 	if raw == "" {
 		return "", false, errors.New("路径为空")
 	}
-	// file:///C:/... → C:\...
+	// file:///Users/... 或 file:///C:/...
 	if strings.HasPrefix(strings.ToLower(raw), "file:") {
-		u := raw
-		u = strings.TrimPrefix(u, "file://")
-		u = strings.TrimPrefix(u, "file:")
-		u = strings.TrimPrefix(u, "//")
-		if idx := strings.Index(u, "?"); idx >= 0 {
-			u = u[:idx]
+		if u, e := url.Parse(raw); e == nil {
+			p := u.Path
+			if unesc, e2 := url.PathUnescape(p); e2 == nil {
+				p = unesc
+			}
+			if runtime.GOOS == "windows" {
+				// /C:/Users/... → C:\Users\...
+				p = strings.ReplaceAll(p, "/", `\`)
+				if strings.HasPrefix(p, `\`) && len(p) > 2 && p[2] == ':' {
+					p = p[1:]
+				}
+				if strings.HasPrefix(strings.ToLower(p), `localhost\`) {
+					p = p[len(`localhost\`):]
+				}
+			}
+			raw = p
 		}
-		if unesc, e := url.QueryUnescape(u); e == nil {
-			u = unesc
-		}
-		u = strings.ReplaceAll(u, "/", `\`)
-		if strings.HasPrefix(u, `\`) && len(u) > 2 && u[2] == ':' {
-			u = u[1:]
-		}
-		if strings.HasPrefix(strings.ToLower(u), `localhost\`) {
-			u = u[len(`localhost\`):]
-		}
-		raw = u
 	}
+	raw = expandUserPath(raw)
 	abs, err := filepath.Abs(filepath.Clean(raw))
 	if err != nil {
 		return "", false, err
@@ -401,11 +437,35 @@ func normalizeLocalSharePath(raw string) (share string, wasFile bool, err error)
 	if err != nil {
 		return "", false, errors.New("路径不存在：" + abs)
 	}
-	// 文件就返回文件路径，文件夹返回文件夹路径（不再偷偷改成父目录）
 	if st.IsDir() {
 		return abs, false, nil
 	}
 	return abs, true, nil
+}
+
+// SessionFinderSelection macOS：读取访达当前选中项路径（拖放识别）
+func SessionFinderSelection(c *gin.Context) {
+	picked, err := folderdialog.FinderSelection()
+	if err != nil {
+		engine.ERR(err.Error(), c)
+		return
+	}
+	if strings.TrimSpace(picked) == "" {
+		engine.ERR("访达没有选中文件，请先在访达点一下文件再拖，或点「选文件」", c)
+		return
+	}
+	share, wasFile, err := normalizeLocalSharePath(picked)
+	if err != nil {
+		engine.ERR(err.Error(), c)
+		return
+	}
+	engine.OK("OK", gin.H{
+		"abs":       share,
+		"sharePath": share,
+		"folder":    filepath.Base(share),
+		"wasFile":   wasFile,
+		"source":    picked,
+	}, c)
 }
 
 // SessionPickFolder 本机弹窗选择。
@@ -524,6 +584,11 @@ func SessionReveal(c *gin.Context) {
 		target = filepath.Clean(body.Path)
 	} else if sess.Mode == session.ModeDistribute && sess.SharePath != "" {
 		target = sess.SharePath
+		if body.Dir || c.Query("dir") == "1" || c.Query("dir") == "true" {
+			if st, e := os.Stat(target); e == nil && !st.IsDir() {
+				target = filepath.Dir(target)
+			}
+		}
 	} else {
 		target = sessStore.InboxDir(sess)
 	}
@@ -532,7 +597,16 @@ func SessionReveal(c *gin.Context) {
 	if absTarget != "" {
 		target = absTarget
 	}
-	if !sessStore.PathAllowed(sess, target) {
+	allowed := sessStore.PathAllowed(sess, target)
+	if !allowed && sess.SharePath != "" {
+		if st, e := os.Stat(target); e == nil && st.IsDir() {
+			sp, _ := filepath.Abs(sess.SharePath)
+			if strings.EqualFold(filepath.Dir(sp), target) {
+				allowed = true
+			}
+		}
+	}
+	if !allowed {
 		engine.ERR("路径不在本活动目录内: "+target, c)
 		return
 	}
@@ -541,7 +615,6 @@ func SessionReveal(c *gin.Context) {
 		return
 	}
 	log.Println("SessionReveal:", target)
-	// 本地目录/文件用 explorer，避免 cmd start 对中文路径偶发失败
 	if err := cmd.Reveal(target); err != nil {
 		engine.ERR("打开失败: "+err.Error(), c)
 		return
