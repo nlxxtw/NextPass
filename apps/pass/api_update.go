@@ -194,8 +194,26 @@ func CheckUpdateInfo() UpdateInfo {
 	return out
 }
 
+// DownloadProgress 下载进度：已下字节、总字节（未知时 total<=0）
+type DownloadProgress func(gotten, total int64)
+
+// DirectDownloadURL 去掉镜像前缀，得到可直接给浏览器打开的地址
+func DirectDownloadURL(info UpdateInfo) string {
+	u := strings.TrimSpace(info.DownloadURL)
+	if u == "" {
+		return strings.TrimSpace(info.ReleaseURL)
+	}
+	if strings.HasPrefix(u, GithubMirror) {
+		raw := strings.TrimPrefix(u, GithubMirror)
+		if raw != "" {
+			return raw
+		}
+	}
+	return u
+}
+
 // DownloadUpdateZip 把对应平台安装包下到目录（默认程序旁 _update）
-func DownloadUpdateZip(info UpdateInfo) (string, error) {
+func DownloadUpdateZip(info UpdateInfo, onProgress DownloadProgress) (string, error) {
 	url := strings.TrimSpace(info.DownloadURL)
 	if url == "" {
 		return "", fmt.Errorf("无下载地址")
@@ -217,14 +235,16 @@ func DownloadUpdateZip(info UpdateInfo) (string, error) {
 	dest := filepath.Join(dir, name)
 	tmp := dest + ".part"
 
-	client := &http.Client{Timeout: 8 * time.Minute}
+	// 单地址限时，避免卡住很久才回落到浏览器
+	client := &http.Client{Timeout: 90 * time.Second}
 	urls := []string{url}
-	// 若镜像失败再试原始 github
 	if strings.HasPrefix(url, GithubMirror) {
 		raw := strings.TrimPrefix(url, GithubMirror)
 		if raw != "" && raw != url {
 			urls = append(urls, raw)
 		}
+	} else if !strings.Contains(url, "github.19492035.xyz") {
+		urls = append([]string{mirrorURL(url)}, urls...)
 	}
 	var lastErr error
 	for _, u := range urls {
@@ -251,18 +271,44 @@ func DownloadUpdateZip(info UpdateInfo) (string, error) {
 			lastErr = err
 			continue
 		}
-		_, err = io.Copy(f, res.Body)
+		total := res.ContentLength
+		var gotten int64
+		buf := make([]byte, 64*1024)
+		var copyErr error
+		for {
+			n, rerr := res.Body.Read(buf)
+			if n > 0 {
+				if _, werr := f.Write(buf[:n]); werr != nil {
+					copyErr = werr
+					break
+				}
+				gotten += int64(n)
+				if onProgress != nil {
+					onProgress(gotten, total)
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				copyErr = rerr
+				break
+			}
+		}
 		res.Body.Close()
 		_ = f.Close()
-		if err != nil {
+		if copyErr != nil {
 			_ = os.Remove(tmp)
-			lastErr = err
+			lastErr = copyErr
 			continue
 		}
 		_ = os.Remove(dest)
 		if err := os.Rename(tmp, dest); err != nil {
 			lastErr = err
 			continue
+		}
+		if onProgress != nil {
+			onProgress(gotten, gotten)
 		}
 		return dest, nil
 	}

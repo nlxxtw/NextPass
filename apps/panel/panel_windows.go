@@ -343,10 +343,24 @@ func runForceUpdateCheck(
 	forceUpdateLocked = true
 	_ = gateway.StopServer()
 
+	browserURL := passapp.DirectDownloadURL(u)
+	if browserURL == "" {
+		browserURL = u.DownloadURL
+	}
+	if browserURL == "" {
+		browserURL = u.ReleaseURL
+	}
+
+	var (
+		dlg    *walk.Dialog
+		pb     *walk.ProgressBar
+		status *walk.Label
+	)
+
 	if mw != nil {
 		mw.Synchronize(func() {
 			if tipLB != nil {
-				_ = tipLB.SetText(fmt.Sprintf("必须更新到 v%s（当前 v%s）", u.Latest, u.Current))
+				_ = tipLB.SetText(fmt.Sprintf("必须更新到 v%s（当前 v%s）· 正在下载", u.Latest, u.Current))
 			}
 			if btnStart != nil {
 				btnStart.SetEnabled(false)
@@ -360,28 +374,65 @@ func runForceUpdateCheck(
 			if btnStudent != nil {
 				btnStudent.SetEnabled(false)
 			}
-			walk.MsgBox(mw, "必须更新",
-				fmt.Sprintf("发现新版本 v%s（当前 v%s）。\n\n旧版本不能继续使用，正在自动下载安装包…", u.Latest, u.Current),
-				walk.MsgBoxIconWarning)
+			// 立刻打开浏览器下载，不再等内置下载失败才弹（以前会卡住很久）
+			if browserURL != "" {
+				_ = cmd.Open(browserURL)
+				applog.Info("已打开浏览器下载: %s", browserURL)
+			}
+			// Create+Show 非阻塞；Run 会卡住导致下载迟迟不开始
+			if err := (Dialog{
+				AssignTo: &dlg,
+				Title:    "下载新版本 v" + u.Latest,
+				MinSize:  Size{Width: 440, Height: 160},
+				Layout:   VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}},
+				Children: []Widget{
+					Label{Text: "浏览器已开始下载。下方为程序同时保存到本机的进度："},
+					ProgressBar{AssignTo: &pb, MaxValue: 1000},
+					Label{AssignTo: &status, Text: "连接中…"},
+				},
+			}).Create(mw); err != nil {
+				applog.Info("进度窗创建失败: %v", err)
+			} else if dlg != nil {
+				dlg.Show()
+			}
 		})
 	}
 
-	dest, err := passapp.DownloadUpdateZip(u)
+	dest, err := passapp.DownloadUpdateZip(u, func(gotten, total int64) {
+		if mw == nil || pb == nil {
+			return
+		}
+		mw.Synchronize(func() {
+			if pb == nil || status == nil {
+				return
+			}
+			if total > 0 {
+				v := int(gotten * 1000 / total)
+				if v > 1000 {
+					v = 1000
+				}
+				pb.SetValue(v)
+				_ = status.SetText(fmt.Sprintf("本机保存 %.1f / %.1f MB", float64(gotten)/(1024*1024), float64(total)/(1024*1024)))
+			} else {
+				_ = status.SetText(fmt.Sprintf("本机已接收 %.1f MB…", float64(gotten)/(1024*1024)))
+			}
+		})
+	})
+
 	if mw != nil {
 		mw.Synchronize(func() {
+			if dlg != nil {
+				dlg.Dispose()
+				dlg = nil
+			}
 			if err != nil {
-				applog.Info("自动下载失败: %v", err)
+				applog.Info("本机保存失败(浏览器应已下载): %v", err)
 				if tipLB != nil {
-					_ = tipLB.SetText("自动下载失败，请点「检查更新」重试或打开下载页")
+					_ = tipLB.SetText("请用浏览器下载的 zip 解压覆盖 nextpass.exe")
 				}
-				if u.DownloadURL != "" {
-					_ = cmd.Open(u.DownloadURL)
-				} else if u.ReleaseURL != "" {
-					_ = cmd.Open(u.ReleaseURL)
-				}
-				walk.MsgBox(mw, "请手动下载",
-					"自动下载失败，已尝试打开下载页。\n请下载 nextpass-win.zip，解压后覆盖本目录的 nextpass.exe，再重新打开。",
-					walk.MsgBoxIconError)
+				walk.MsgBox(mw, "请完成更新",
+					"浏览器应已弹出下载。\n请保存 nextpass-win.zip，解压后覆盖本目录的 nextpass.exe，再重新打开。\n\n若浏览器没有下载，请点「检查更新」重试。",
+					walk.MsgBoxIconWarning)
 				return
 			}
 			dir := filepath.Dir(dest)
@@ -390,7 +441,7 @@ func runForceUpdateCheck(
 				_ = tipLB.SetText("新版本已下载，请解压覆盖后重启")
 			}
 			walk.MsgBox(mw, "请完成更新",
-				fmt.Sprintf("新版本已下载到：\n%s\n\n请解压，用新的 nextpass.exe 覆盖旧文件，然后重新打开本程序。\n覆盖完成前旧版本无法使用。", dest),
+				fmt.Sprintf("本机已保存：\n%s\n\n（浏览器里若也有一份，用任意一份即可）\n请解压并用新的 nextpass.exe 覆盖旧文件，然后重新打开。", dest),
 				walk.MsgBoxIconInformation)
 		})
 	}
