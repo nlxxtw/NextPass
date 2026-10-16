@@ -16,43 +16,73 @@ func isClashOrFakeIP(ip net.IP) bool {
 	return v4[0] == 198 && (v4[1] == 18 || v4[1] == 19)
 }
 
-func isGoodLAN(ip net.IP) bool {
-	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+func isUsableHostIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
 		return false
 	}
-	v4 := ip.To4()
-	if v4 == nil {
+	if ip.To4() == nil {
 		return false
 	}
 	if isClashOrFakeIP(ip) {
 		return false
 	}
-	return ip.IsPrivate()
+	return true
+}
+
+// 教室场景优先：192.168 > 10.x > 172.16-31 > 其它
+func privateClassScore(ip net.IP) int {
+	v4 := ip.To4()
+	if v4 == nil {
+		return 99
+	}
+	if v4[0] == 192 && v4[1] == 168 {
+		return 0
+	}
+	if v4[0] == 10 {
+		return 1
+	}
+	if v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31 {
+		return 2
+	}
+	if ip.IsPrivate() {
+		return 3
+	}
+	return 8 // 公网网卡偶发也能在局域网用
 }
 
 func ifacePriority(name string) int {
 	n := strings.ToLower(name)
+	// 虚拟/隧道网卡靠后
+	virtualHints := []string{
+		"vethernet", "hyper-v", "vmware", "virtualbox", "vbox", "docker", "wsl",
+		"bluetooth", "loopback", "isatap", "teredo", "meta", "tap", "tun", "utun",
+		"ppp", "ipsec", "wireguard", "nordlynx", "clash", "awdl", "llw", "vpn",
+	}
+	for _, h := range virtualHints {
+		if strings.Contains(n, h) {
+			return 90
+		}
+	}
 	switch {
-	case strings.HasPrefix(n, "en"): // macOS Wi‑Fi / 有线
+	case strings.Contains(n, "wi-fi"), strings.Contains(n, "wifi"), strings.Contains(n, "wlan"),
+		strings.Contains(n, "wireless"), strings.Contains(n, "无线"):
 		return 0
-	case strings.HasPrefix(n, "eth"), strings.HasPrefix(n, "wlan"):
+	case strings.HasPrefix(n, "en"), // macOS
+		strings.Contains(n, "ethernet"), strings.Contains(n, "eth"),
+		strings.Contains(n, "本地"), strings.Contains(n, "以太网"):
 		return 1
-	case strings.HasPrefix(n, "wl"):
-		return 2
-	case strings.Contains(n, "utun"), strings.Contains(n, "tun"), strings.Contains(n, "ppp"),
-		strings.Contains(n, "ipsec"), strings.HasPrefix(n, "awdl"), strings.HasPrefix(n, "llw"):
-		return 90
 	default:
-		return 50
+		return 40
 	}
 }
 
 type lanCand struct {
-	ip   string
-	prio int
+	ip       string
+	ifacePri int
+	classPri int
 }
 
-// ListLANIPs 返回可用的局域网 IPv4（已排除回环、链路本地、Clash 假 IP）
+// ListLANIPs 返回可用主机 IPv4（排除回环/链路本地/Clash 假 IP），教室网卡优先
 func ListLANIPs() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -65,23 +95,31 @@ func ListLANIPs() []string {
 			continue
 		}
 		addrs, _ := iface.Addrs()
-		prio := ifacePriority(iface.Name)
+		ipri := ifacePriority(iface.Name)
 		for _, address := range addrs {
 			ipnet, ok := address.(*net.IPNet)
-			if !ok || !isGoodLAN(ipnet.IP) {
+			if !ok || !isUsableHostIP(ipnet.IP) {
 				continue
 			}
+			// 列表里仍优先私网；公网地址也可作候选但靠后
 			s := ipnet.IP.String()
 			if _, ok := seen[s]; ok {
 				continue
 			}
 			seen[s] = struct{}{}
-			list = append(list, lanCand{ip: s, prio: prio})
+			list = append(list, lanCand{
+				ip:       s,
+				ifacePri: ipri,
+				classPri: privateClassScore(ipnet.IP),
+			})
 		}
 	}
 	sort.SliceStable(list, func(i, j int) bool {
-		if list[i].prio != list[j].prio {
-			return list[i].prio < list[j].prio
+		if list[i].ifacePri != list[j].ifacePri {
+			return list[i].ifacePri < list[j].ifacePri
+		}
+		if list[i].classPri != list[j].classPri {
+			return list[i].classPri < list[j].classPri
 		}
 		return list[i].ip < list[j].ip
 	})
@@ -92,24 +130,39 @@ func ListLANIPs() []string {
 	return out
 }
 
-// GetOutBoundIP 优先返回真实局域网 IP（避开 VPN/Clash 假地址）
+func udpOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:53")
+	if err != nil {
+		// 无外网时试常见网关探测（不要求通）
+		conn, err = net.Dial("udp", "192.168.1.1:53")
+		if err != nil {
+			conn, err = net.Dial("udp", "10.0.0.1:53")
+			if err != nil {
+				return nil
+			}
+		}
+	}
+	defer conn.Close()
+	la, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || la == nil {
+		return nil
+	}
+	return la.IP
+}
+
+// GetOutBoundIP 获取教师机可供学生访问的局域网 IP
 func GetOutBoundIP() string {
+	// 1) UDP 出口地址：多数教室最准（但要拒绝 Clash 假 IP）
+	if ip := udpOutboundIP(); isUsableHostIP(ip) && ip.IsPrivate() {
+		return ip.String()
+	}
+	// 2) 网卡扫描：Wi‑Fi/以太网 + 192.168 优先，虚拟网卡靠后
 	if ips := ListLANIPs(); len(ips) > 0 {
 		return ips[0]
 	}
-	// 回退：UDP 探测，但仍拒绝假 IP
-	conn, err := net.Dial("udp", "8.8.8.8:53")
-	if err != nil {
-		return "127.0.0.1"
-	}
-	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	ip := localAddr.IP
-	if isGoodLAN(ip) {
+	// 3) UDP 得到的非假 IP（哪怕不是 RFC1918，部分园区网如此）
+	if ip := udpOutboundIP(); isUsableHostIP(ip) {
 		return ip.String()
-	}
-	if s := ip.String(); s != "" && !ip.IsLoopback() && !isClashOrFakeIP(ip) {
-		return s
 	}
 	return "127.0.0.1"
 }
@@ -123,6 +176,9 @@ func GetLocalIP() string {
 func GetIPArr() ([]string, error) {
 	ips := ListLANIPs()
 	if len(ips) == 0 {
+		if ip := GetOutBoundIP(); ip != "" && ip != "127.0.0.1" {
+			return []string{ip}, nil
+		}
 		return nil, fmt.Errorf("未找到局域网 IP")
 	}
 	return ips, nil
@@ -130,9 +186,9 @@ func GetIPArr() ([]string, error) {
 
 // GetIPMap 用来获取有效的内网IP
 func GetIPMap() (map[int]string, error) {
-	ips := ListLANIPs()
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("未找到局域网 IP")
+	ips, err := GetIPArr()
+	if err != nil {
+		return nil, err
 	}
 	m := make(map[int]string, len(ips))
 	for i, ip := range ips {

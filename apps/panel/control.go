@@ -63,7 +63,15 @@ func buildState(msg string) State {
 	if gateway.IsRunning() {
 		port = gateway.PortOnly(gateway.CurrentAddr())
 	}
+	if ip == "" || ip == "127.0.0.1" {
+		if ips := nets.ListLANIPs(); len(ips) > 0 {
+			ip = ips[0]
+		}
+	}
 	base := fmt.Sprintf("http://%s:%s", ip, port)
+	if msg == "" && (ip == "" || ip == "127.0.0.1") {
+		msg = "未识别到局域网 IP，学生将无法访问。请连接 Wi‑Fi/有线，或暂时关闭 VPN/Clash 后点「保存并重启」"
+	}
 	st := State{
 		Running:    gateway.IsRunning(),
 		Port:       port,

@@ -36,7 +36,21 @@
     try {
       var ip = await NP.api("/pass/read-ip", { noRedirect: true });
       var port = location.port || (location.protocol === "https:" ? "443" : "80");
-      if (ip) cachedRoot = location.protocol + "//" + ip + (port ? ":" + port : "") + "/";
+      // 127.0.0.1 学生访问不了；优先用服务端探测的局域网 IP
+      if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "localhost") {
+        var host = location.hostname || "";
+        if (host && host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
+          ip = host;
+        } else {
+          ip = "";
+        }
+      }
+      if (ip) {
+        cachedRoot = location.protocol + "//" + ip + (port ? ":" + port : "") + "/";
+      } else {
+        cachedRoot = location.origin + "/";
+        NP.toast("未识别到局域网 IP，请检查网卡/关掉 VPN 后点刷新");
+      }
     } catch (e) {
       cachedRoot = location.origin + "/";
     }
