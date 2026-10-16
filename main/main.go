@@ -89,7 +89,7 @@ func main() {
 			}
 			engine.Print(aurora.BrightBlue("本机管理： http://127.0.0.1:" + port + "/admin"))
 			if len(ips) == 0 || (len(ips) == 1 && ips[0] == "127.0.0.1") {
-				engine.Print(aurora.Yellow("未识别到局域网 IP（若开了 VPN/Clash 请关闭或允许局域网）"))
+				engine.Print(aurora.Yellow("未识别到出口 IP，请检查网络"))
 			}
 		}
 		engine.Print(aurora.Green("改端口/密码：编辑同目录 config.ini 后重启"))
