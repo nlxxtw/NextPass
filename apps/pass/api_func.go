@@ -25,9 +25,14 @@ func ReadConfig(c *gin.Context) {
 	engine.OK("OK", config_, c)
 }
 
-// ReadIP 读取配置
+// ReadIP 读取配置（学生分享用局域网 IP，避免 127.0.0.1）
 func ReadIP(c *gin.Context) {
 	ip := nets.GetOutBoundIP()
+	if ip == "" || ip == "127.0.0.1" {
+		if ips := nets.ListLANIPs(); len(ips) > 0 {
+			ip = ips[0]
+		}
+	}
 	engine.OK("OK", ip, c)
 }
 

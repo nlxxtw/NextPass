@@ -36,9 +36,16 @@
     try {
       var ip = await NP.api("/pass/read-ip", { noRedirect: true });
       var port = location.port || (location.protocol === "https:" ? "443" : "80");
-      if (ip) cachedRoot = location.protocol + "//" + ip + (port ? ":" + port : "") + "/";
+      // 忽略回环：本机用 127 打开管理页时，分享链接仍要用局域网 IP
+      if (ip && ip !== "127.0.0.1" && ip !== "::1") {
+        cachedRoot = location.protocol + "//" + ip + (port ? ":" + port : "") + "/";
+      } else if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
+        cachedRoot = location.origin + "/";
+      }
     } catch (e) {
-      cachedRoot = location.origin + "/";
+      if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
+        cachedRoot = location.origin + "/";
+      }
     }
     $("rootLink").textContent = rootLink();
     var box = $("qr");

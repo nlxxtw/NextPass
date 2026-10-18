@@ -105,8 +105,14 @@ func main() {
 			engine.Print(aurora.Yellow("Mac 排错日志：" + filepath.Join(p, "_nextpass", "mac_debug.log")))
 		}
 		engine.Print(aurora.Black("--------------------------------------------"))
-		// 本机浏览器仍走 127.0.0.1（避免 Clash 假 IP 打不开）；二维码/分享链接用真实局域网 IP
-		_ = cmd.Open("http://127.0.0.1:" + port + "/admin")
+		// 优先用局域网 IP 打开，避免管理页/二维码落成 127.0.0.1；打不开再回退本机回环
+		openURL := "http://127.0.0.1:" + port + "/admin"
+		if shareIP := nets.GetOutBoundIP(); shareIP != "" && shareIP != "127.0.0.1" {
+			openURL = "http://" + shareIP + ":" + port + "/admin"
+		}
+		if err := cmd.Open(openURL); err != nil && openURL != "http://127.0.0.1:"+port+"/admin" {
+			_ = cmd.Open("http://127.0.0.1:" + port + "/admin")
+		}
 	}()
 	time.Sleep(20 * time.Millisecond)
 	_ = engine.Run(configFile)
