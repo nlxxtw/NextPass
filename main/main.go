@@ -77,19 +77,26 @@ func main() {
 			engine.Print(aurora.BrightBlue("学生访问： http://" + engine.Domain + "/"))
 			engine.Print(aurora.BrightBlue("老师管理： http://" + engine.Domain + "/admin"))
 		} else {
+			shareIP := nets.GetOutBoundIP()
 			ips := nets.ListLANIPs()
-			if len(ips) == 0 {
-				ips = []string{nets.GetOutBoundIP()}
+			if len(ips) == 0 && shareIP != "" && shareIP != "127.0.0.1" {
+				ips = []string{shareIP}
 			}
+			printed := false
 			for _, ip := range ips {
 				if ip == "" || ip == "127.0.0.1" {
 					continue
 				}
 				engine.Print(aurora.BrightBlue("学生访问： http://" + ip + ":" + port + "/"))
+				printed = true
+			}
+			if !printed && shareIP != "" && shareIP != "127.0.0.1" {
+				engine.Print(aurora.BrightBlue("学生访问： http://" + shareIP + ":" + port + "/"))
+				printed = true
 			}
 			engine.Print(aurora.BrightBlue("本机管理： http://127.0.0.1:" + port + "/admin"))
-			if len(ips) == 0 || (len(ips) == 1 && ips[0] == "127.0.0.1") {
-				engine.Print(aurora.Yellow("未识别到出口 IP，请检查网络"))
+			if !printed {
+				engine.Print(aurora.Yellow("未识别到局域网 IP，请检查 Wi‑Fi/网线"))
 			}
 		}
 		engine.Print(aurora.Green("改端口/密码：编辑同目录 config.ini 后重启"))
@@ -98,7 +105,7 @@ func main() {
 			engine.Print(aurora.Yellow("Mac 排错日志：" + filepath.Join(p, "_nextpass", "mac_debug.log")))
 		}
 		engine.Print(aurora.Black("--------------------------------------------"))
-		// 本机用 127.0.0.1 打开，避免 VPN 假 IP 导致浏览器打不开
+		// 本机浏览器仍走 127.0.0.1（避免 Clash 假 IP 打不开）；二维码/分享链接用真实局域网 IP
 		_ = cmd.Open("http://127.0.0.1:" + port + "/admin")
 	}()
 	time.Sleep(20 * time.Millisecond)
