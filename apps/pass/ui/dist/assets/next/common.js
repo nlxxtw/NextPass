@@ -797,9 +797,7 @@
       }
       el.hidden = false;
       document.documentElement.classList.add("update-locked");
-      if (!opts.skipAutoDownload) {
-        openUpdateDownload(url);
-      }
+      // 不自动下载：只在用户点「立即下载新版本」时下一次
       return true;
     } catch (e) {
       if (opts.manual) {
