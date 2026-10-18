@@ -94,6 +94,9 @@ func main() {
 		}
 		engine.Print(aurora.Green("改端口/密码：编辑同目录 config.ini 后重启"))
 		engine.Print(aurora.Green("防火墙需允许本程序接受传入连接"))
+		if p := strings.TrimSpace(passapp.ConfigDataPath()); p != "" {
+			engine.Print(aurora.Yellow("Mac 排错日志：" + filepath.Join(p, "_nextpass", "mac_debug.log")))
+		}
 		engine.Print(aurora.Black("--------------------------------------------"))
 		// 本机用 127.0.0.1 打开，避免 VPN 假 IP 导致浏览器打不开
 		_ = cmd.Open("http://127.0.0.1:" + port + "/admin")

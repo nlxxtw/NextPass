@@ -2,6 +2,7 @@ package app
 
 import (
 	"b0go/apps/pass/lib/folderdialog"
+	"b0go/apps/pass/lib/macdiag"
 	"b0go/apps/pass/session"
 	"b0go/core/engine"
 	"b0go/core/tools/cmd"
@@ -39,10 +40,12 @@ func ensureWritableDataRoot(configured string) string {
 	try := func(dir string) string {
 		dir = filepath.Clean(dir)
 		if err := os.MkdirAll(dir, 0755); err != nil {
+			macdiag.Infof("ensureWritable mkdir fail %q: %v", dir, err)
 			return ""
 		}
 		test := filepath.Join(dir, ".np_write_test")
 		if err := os.WriteFile(test, []byte("ok"), 0644); err != nil {
+			macdiag.Infof("ensureWritable write fail %q: %v", dir, err)
 			return ""
 		}
 		_ = os.Remove(test)
@@ -50,6 +53,7 @@ func ensureWritableDataRoot(configured string) string {
 		if err != nil {
 			return dir
 		}
+		macdiag.Infof("ensureWritable OK %q", abs)
 		return abs
 	}
 	homeDocs := ""
@@ -79,9 +83,16 @@ func ensureWritableDataRoot(configured string) string {
 }
 
 func initSessionStore() {
+	// 先挂日志，再探测可写目录，确保 mkdir/权限失败也进 mac_debug.log
+	if home, err := os.UserHomeDir(); err == nil {
+		macdiag.Setup(filepath.Join(home, "Documents", "NextPass", "_nextpass", "mac_debug.log"))
+	}
 	root := ensureWritableDataRoot(config.Path)
 	config.Path = root
-	_ = os.MkdirAll(filepath.Join(root, "_nextpass"), 0755)
+	np := filepath.Join(root, "_nextpass")
+	_ = os.MkdirAll(np, 0755)
+	macdiag.Setup(filepath.Join(np, "mac_debug.log"))
+	macdiag.Infof("initSessionStore root=%q goos=%s", root, runtime.GOOS)
 	sessStore = session.NewStore(root)
 }
 
@@ -123,17 +134,32 @@ func SessionCreate(c *gin.Context) {
 	if body.Mode == "" {
 		body.Mode = session.ModeCollect
 	}
+	macdiag.Infof("SessionCreate mode=%q name=%q folder=%q share=%q dataRoot=%q macLog=%q",
+		body.Mode, body.Name, body.Folder, body.SharePath, config.Path, macdiag.Path())
+	if sessStore == nil {
+		macdiag.Infof("SessionCreate FAIL: sessStore nil")
+		engine.ERR("内部错误：会话存储未初始化（详见 mac_debug.log）", c)
+		return
+	}
 	sess, err := sessStore.Create(body.Name, body.Folder, body.SharePath, body.Mode, body.RequireIdentity, body.CanSeeOthers, body.CanDownloadOthers, body.CanDownloadMaterials, body.Deadline, body.AccessPassword)
 	if err != nil {
-		engine.ERR(err.Error(), c)
+		macdiag.Infof("SessionCreate FAIL mode=%q dataRoot=%q err=%v", body.Mode, config.Path, err)
+		msg := err.Error()
+		if body.Mode == session.ModeText {
+			msg = msg + "（数据目录：" + config.Path + "；日志：" + macdiag.Path() + "）"
+		}
+		engine.ERR(msg, c)
 		return
 	}
 	// 发文本：创建时就把教师标签绑到管理端当前 IPv4
 	if sess != nil && sess.Mode == session.ModeText {
 		if bound, err2 := sessStore.BindTeacherIP(sess.ID, clientIPv4(c), true); err2 == nil {
 			sess.TeacherIP = bound
+		} else {
+			macdiag.Infof("BindTeacherIP: %v", err2)
 		}
 	}
+	macdiag.Infof("SessionCreate OK id=%s mode=%s", sess.ID, sess.Mode)
 	engine.OK("OK", sess, c)
 }
 
@@ -337,10 +363,12 @@ func SessionCaptureDrop(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	folderdialog.ClearCaptureDropFlags()
+	macdiag.Infof("SessionCaptureDrop")
 	picked, err := folderdialog.CaptureDrop(20*time.Second, folderdialog.DropRect{
 		X: body.X, Y: body.Y, W: body.W, H: body.H,
 	})
 	if err != nil {
+		macdiag.Infof("SessionCaptureDrop FAIL: %v", err)
 		engine.ERR(err.Error(), c)
 		return
 	}
@@ -447,16 +475,18 @@ func normalizeLocalSharePath(raw string) (share string, wasFile bool, err error)
 func SessionFinderSelection(c *gin.Context) {
 	picked, err := folderdialog.FinderSelection()
 	if err != nil {
-		engine.ERR(err.Error(), c)
+		macdiag.Infof("SessionFinderSelection err: %v", err)
+		engine.OK("OK", gin.H{"abs": "", "sharePath": "", "empty": true}, c)
 		return
 	}
 	if strings.TrimSpace(picked) == "" {
-		engine.ERR("访达没有选中文件，请先在访达点一下文件再拖，或点「选文件」", c)
+		engine.OK("OK", gin.H{"abs": "", "sharePath": "", "empty": true}, c)
 		return
 	}
 	share, wasFile, err := normalizeLocalSharePath(picked)
 	if err != nil {
-		engine.ERR(err.Error(), c)
+		macdiag.Infof("SessionFinderSelection normalize: %v", err)
+		engine.OK("OK", gin.H{"abs": "", "sharePath": "", "empty": true}, c)
 		return
 	}
 	engine.OK("OK", gin.H{
@@ -492,6 +522,7 @@ func SessionPickFolder(c *gin.Context) {
 		start = absRoot
 	}
 
+	macdiag.Infof("SessionPickFolder kind=%q any=%v start=%q", kind, anyLocal, start)
 	var picked string
 	var err error
 	switch kind {
@@ -503,13 +534,16 @@ func SessionPickFolder(c *gin.Context) {
 		picked, err = folderdialog.Pick(start, title)
 	}
 	if err != nil {
+		macdiag.Infof("SessionPickFolder FAIL: %v", err)
 		engine.ERR(err.Error(), c)
 		return
 	}
 	if picked == "" {
+		macdiag.Infof("SessionPickFolder cancelled")
 		engine.ERR("未选择", c)
 		return
 	}
+	macdiag.Infof("SessionPickFolder OK: %q", picked)
 
 	share, wasFile, err := normalizeLocalSharePath(picked)
 	if err != nil {

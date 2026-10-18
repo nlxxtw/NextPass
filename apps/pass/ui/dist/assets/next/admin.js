@@ -461,9 +461,8 @@
         await applySharePath(p);
         return;
       }
-      // Chrome/Safari 不给网页绝对路径：先读访达当前选中（刚拖的文件通常仍选中）
+      // 浏览器不给绝对路径：静默试访达选中；失败则提示粘贴/点选，不再连环弹系统框
       try {
-        NP.toast("正在识别拖放路径…");
         var sel = await NP.api("/pass/session/finder-selection", {
           method: "POST",
           json: {},
@@ -475,14 +474,7 @@
           return;
         }
       } catch (ignore) {}
-      NP.toast("正在打开系统选择框…");
-      var data = await pickFolder(true, "file");
-      if (data) {
-        var dp = data.source || data.sharePath || data.abs || "";
-        if (dp) $("sharePath").value = dp;
-      } else {
-        NP.toast("也可粘贴路径：访达选中 → Option+Command+C 拷贝路径");
-      }
+      NP.toast("请点「选文件」或「选文件夹」，或访达选中后 Option+Command+C 粘贴路径");
     });
     if (input) {
       input.addEventListener("paste", function (e) {

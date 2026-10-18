@@ -7,23 +7,25 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"b0go/apps/pass/lib/macdiag"
 )
 
 func runOSA(script string) (string, error) {
-	// 用 stdin 喂多行脚本，比多个 -e 稳；并尽量把对话框提到前台
-	full := "try\n" +
-		"  tell application \"SystemUIServer\" to activate\n" +
-		"end try\n" +
-		"delay 0.05\n" +
-		script + "\n"
-	cmd := exec.Command("osascript")
-	cmd.Stdin = strings.NewReader(full)
+	// 只用 choose file/folder，不要 activate SystemUIServer / tell Finder（易触发「被拒绝」循环弹框）
+	cmd := exec.Command("osascript", "-e", script)
 	out, err := cmd.CombinedOutput()
 	s := strings.TrimSpace(string(out))
+	macdiag.Infof("osascript script=%q out=%q err=%v", truncate(script, 120), truncate(s, 200), err)
 	if err != nil {
 		low := strings.ToLower(s + " " + err.Error())
 		if strings.Contains(low, "user canceled") || strings.Contains(low, "user cancelled") {
 			return "", nil
+		}
+		if strings.Contains(low, "not authorized") || strings.Contains(low, "不允许") ||
+			strings.Contains(low, "被拒绝") || strings.Contains(low, "1002") ||
+			strings.Contains(low, "(-1743)") || strings.Contains(low, "(-1728)") {
+			return "", errors.New("系统拒绝弹出选择框。请到「系统设置 → 隐私与安全性 → 自动化」允许本程序/终端控制相关应用；或在访达选中文件后按 Option+Command+C 拷贝路径，粘贴到输入框")
 		}
 		if s != "" {
 			return "", errors.New(s)
@@ -33,85 +35,76 @@ func runOSA(script string) (string, error) {
 	return strings.TrimRight(s, "/"), nil
 }
 
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 func escAS(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return s
 }
 
-func chooseFolderScript(title, startDir string) string {
-	if startDir != "" {
-		return `POSIX path of (choose folder with prompt "` + escAS(title) + `" default location (POSIX file "` + escAS(startDir) + `"))`
-	}
-	return `POSIX path of (choose folder with prompt "` + escAS(title) + `")`
-}
-
-func chooseFileScript(title, startDir string) string {
-	if startDir != "" {
-		return `POSIX path of (choose file with prompt "` + escAS(title) + `" default location (POSIX file "` + escAS(startDir) + `"))`
-	}
-	return `POSIX path of (choose file with prompt "` + escAS(title) + `")`
-}
-
-// Pick 弹出 macOS 文件夹选择框
+// Pick 弹出 macOS 文件夹选择框（只弹一次）
 func Pick(startDir, title string) (string, error) {
 	if title == "" {
 		title = "选择文件夹"
 	}
-	p, err := runOSA(chooseFolderScript(title, startDir))
-	if err != nil && startDir != "" {
-		// default location 无效时（权限/路径）降级再弹一次
-		return runOSA(chooseFolderScript(title, ""))
-	}
-	return p, err
+	macdiag.Infof("Pick startDir=%q title=%q", startDir, title)
+	// 不设 default location，避免无效路径导致失败后再弹第二次
+	return runOSA(`POSIX path of (choose folder with prompt "` + escAS(title) + `")`)
 }
 
-// PickFile 弹出 macOS 文件选择框
+// PickFile 弹出 macOS 文件选择框（只弹一次）
 func PickFile(startDir, title string) (string, error) {
 	if title == "" {
 		title = "选择文件"
 	}
-	p, err := runOSA(chooseFileScript(title, startDir))
-	if err != nil && startDir != "" {
-		return runOSA(chooseFileScript(title, ""))
-	}
-	return p, err
+	macdiag.Infof("PickFile startDir=%q title=%q", startDir, title)
+	return runOSA(`POSIX path of (choose file with prompt "` + escAS(title) + `")`)
 }
 
-// PickFileOrFolder 先问选文件还是文件夹
+// PickFileOrFolder 用两个独立按钮流程，避免 display dialog + 二次权限
 func PickFileOrFolder(startDir string) (string, error) {
-	choice, err := runOSA(`button returned of (display dialog "选「文件」或「文件夹」发给学生" buttons {"取消", "文件夹", "文件"} default button "文件" with title "NextPass")`)
-	if err != nil {
-		return "", err
-	}
-	if choice == "" || choice == "取消" {
-		return "", nil
-	}
-	if choice == "文件夹" {
-		return Pick(startDir, "选择要发给学生的文件夹")
-	}
-	return PickFile(startDir, "选择要发给学生的文件")
+	macdiag.Infof("PickFileOrFolder")
+	// 直接选文件更常见；需要文件夹时用户点「选文件夹」按钮
+	return PickFile(startDir, "选择要发给学生的文件（文件夹请点「选文件夹」）")
 }
 
-// FinderSelection 读取访达当前选中项的 POSIX 路径（拖放后常仍保持选中，可自动识别）
+// FinderSelection 读取访达选中项；无权限时返回空字符串（不报错、不弹框）
 func FinderSelection() (string, error) {
-	script := `tell application "Finder"
-  if (count of (selection as list)) is 0 then
-    return ""
-  end if
-  return POSIX path of (item 1 of (selection as alias list))
-end tell`
-	return runOSA(script)
+	script := `try
+  tell application "Finder"
+    if (count of (selection as list)) is 0 then return ""
+    return POSIX path of (item 1 of (selection as alias list))
+  end tell
+on error
+  return ""
+end try`
+	cmd := exec.Command("osascript", "-e", script)
+	out, err := cmd.CombinedOutput()
+	s := strings.TrimRight(strings.TrimSpace(string(out)), "/")
+	macdiag.Infof("FinderSelection out=%q err=%v", s, err)
+	if err != nil {
+		return "", nil // 静默失败，避免前端连环弹 toast/对话框
+	}
+	return s, nil
 }
 
 func CaptureDrop(timeout time.Duration, rect DropRect) (string, error) {
-	// 浏览器拿不到绝对路径时：优先用访达当前选中项（用户刚拖的文件通常仍在选中）
-	if p, err := FinderSelection(); err == nil && strings.TrimSpace(p) != "" {
-		return strings.TrimRight(strings.TrimSpace(p), "/"), nil
-	}
 	_ = timeout
 	_ = rect
-	return PickFileOrFolder("")
+	// 拖放：只尝试静默读访达选中，绝不在这里再弹 choose 对话框（否则会「一直弹框」）
+	p, _ := FinderSelection()
+	if strings.TrimSpace(p) != "" {
+		macdiag.Infof("CaptureDrop got=%q", p)
+		return p, nil
+	}
+	macdiag.Infof("CaptureDrop empty — ask paste or click pick button")
+	return "", errors.New("未能识别拖放路径。请点「选文件/选文件夹」，或访达选中后 Option+Command+C 粘贴路径")
 }
 
 func CancelCaptureDrop() {}
